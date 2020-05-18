@@ -8,18 +8,21 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/jaswanth05rongali/pub-sub/pub"
+	"pub-sub2/config"
+	"pub-sub2/pub"
+
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/viper"
 	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
 )
 
 var (
 	logger       = log.With().Str("pkg", "main").Logger()
 	p            *kafka.Producer
-	prevTime     = time.Now()
 	clientStatus = true
 )
 
@@ -42,24 +45,50 @@ func (ir *intRange) nextRandom(r *rand.Rand) int {
 	return r.Intn(ir.max-ir.min+1) + ir.min
 }
 func main() {
-	r := rand.New(rand.NewSource(55))
-	ir := intRange{1, 20}
+
+	//r := rand.New(rand.NewSource(55))
+	//ir := intRange{1, 20}
+
 	go func() {
 		for {
-			time.Sleep(time.Duration(ir.nextRandom(r)) * time.Second)
+			time.Sleep(40 * time.Second)
 			clientStatus = !clientStatus
+			fmt.Println("\nclientStatus : ", clientStatus)
 		}
 	}()
 
-	if len(os.Args) < 4 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <broker> <group> <topics..>\n",
+	if len(os.Args) < 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s <type...>\ntype=main for main consumer\ntype=level1 for level1 consumer\ntype=level2 for level2 consumer\ntype=level3 for level3 consumer\n",
 			os.Args[0])
 		os.Exit(1)
 	}
+	Type := os.Args[1]
+	// broker := os.Args[1]
+	// group := os.Args[2]
+	// topics := os.Args[3:]
 
-	broker := os.Args[1]
-	group := os.Args[2]
-	topics := os.Args[3:]
+	config.Init(false)
+	group := viper.GetString("group")
+	topics := viper.GetString("topic")
+	broker := viper.GetString("broker")
+	switch Type {
+	case "level1":
+		group = viper.GetString("level1")
+		topics = viper.GetString("retryLevel1")
+		break
+	case "level2":
+		group = viper.GetString("level2")
+		topics = viper.GetString("retryLevel2")
+		break
+	case "level3":
+		group = viper.GetString("level3")
+		topics = viper.GetString("retryLevel3")
+		break
+	}
+	fmt.Println("\nType:", Type)
+	fmt.Println("\ngroupName:", group)
+	fmt.Println("\ntopicName:", topics)
+
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -77,7 +106,7 @@ func main() {
 
 	fmt.Printf("Created Consumer %v\n", c)
 
-	err = c.SubscribeTopics(topics, nil)
+	err = c.SubscribeTopics(strings.Split(topics, ","), nil)
 
 	run := true
 
@@ -97,33 +126,35 @@ func main() {
 
 				topic := topics
 
-				if topic[0] == "retry_5m_topic" {
-					time.Sleep(5 * time.Second)
-				} else if topic[0] == "retry_30m_topic" {
-					time.Sleep(10 * time.Second)
-				} else if topic[0] == "retry_1hr_topic" {
-					time.Sleep(15 * time.Second)
+				if topic == viper.GetString("retryLevel1") {
+					time.Sleep(time.Duration(viper.GetInt("sleepTimeLevel1")) * time.Second)
+				} else if topic == viper.GetString("retryLevel2") {
+					time.Sleep(time.Duration(viper.GetInt("sleepTimeLevel2")) * time.Second)
+				} else if topic == viper.GetString("retryLevel3") {
+					time.Sleep(time.Duration(viper.GetInt("sleepTimeLevel3")) * time.Second)
 				}
-				err := processMessage(e.Value, topic[0])
+
+				err := processMessage(e.Value, topic)
 
 				temp := data{}
 				json.Unmarshal(e.Value, &temp)
 
 				if err != nil {
-					if topic[0] == "foo" {
-						publishTo(e.Value, "retry_5m_topic", "192.168.99.100:19092")
-					} else if topic[0] == "retry_5m_topic" && temp.Retry != 2 {
-						publishTo(e.Value, "retry_5m_topic", "192.168.99.100:19092")
-					} else if topic[0] == "retry_5m_topic" && temp.Retry == 2 {
-						publishTo(e.Value, "retry_30m_topic", "192.168.99.100:19092")
-					} else if topic[0] == "retry_30m_topic" && temp.Retry != 5 {
-						publishTo(e.Value, "retry_30m_topic", "192.168.99.100:19092")
-					} else if topic[0] == "retry_30m_topic" && temp.Retry == 5 {
-						publishTo(e.Value, "retry_1hr_topic", "192.168.99.100:19092")
-					} else if topic[0] == "retry_1hr_topic" && temp.Retry != 7 {
-						publishTo(e.Value, "retry_1hr_topic", "192.168.99.100:19092")
-					} else if topic[0] == "retry_1hr_topic" && temp.Retry == 7 {
-						publishTo(e.Value, "failed_topic", "192.168.99.100:19092")
+					if topic == viper.GetString("topic") {
+						publishTo(e.Value, viper.GetString("retryLevel1"), broker)
+					} else if topic == viper.GetString("retryLevel1") && temp.Retry != viper.GetInt("triesL1") {
+						publishTo(e.Value, viper.GetString("retryLevel1"), broker)
+					} else if topic == viper.GetString("retryLevel1") && temp.Retry == viper.GetInt("triesL1") {
+						publishTo(e.Value, viper.GetString("retryLevel2"), broker)
+					} else if topic == viper.GetString("retryLevel2") && temp.Retry != viper.GetInt("triesL2") {
+						publishTo(e.Value, viper.GetString("retryLevel2"), broker)
+					} else if topic == viper.GetString("retryLevel2") && temp.Retry == viper.GetInt("triesL2") {
+						publishTo(e.Value, viper.GetString("retryLevel3"), broker)
+					} else if topic == viper.GetString("retryLevel3") && temp.Retry != viper.GetInt("triesL3") {
+						publishTo(e.Value, viper.GetString("retryLevel3"), broker)
+					} else if topic == viper.GetString("retryLevel3") && temp.Retry == viper.GetInt("triesL3") {
+						publishTo(e.Value, viper.GetString("failed"), broker)
+						fmt.Println("Message Discarded:\n", e.Value)
 					}
 				}
 

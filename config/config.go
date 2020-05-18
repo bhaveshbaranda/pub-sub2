@@ -17,7 +17,7 @@ func Init(apiCall bool) {
 	if apiCall {
 		jsonPath, _ = filepath.Abs("config/config.json")
 	} else {
-		jsonPath, _ = filepath.Abs("../config/config.json")
+		jsonPath, _ = filepath.Abs("config/config.json")
 	}
 	bodyBytes, err = ioutil.ReadFile(jsonPath)
 	if err != nil {
